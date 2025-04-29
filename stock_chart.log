@@ -1,0 +1,26 @@
+2025-04-21 15:55:56,573 - StockChartLogger - INFO - Starting the minimal Dash candlestick application
+2025-04-21 15:55:56,574 - StockChartLogger - INFO - Package dash version: 2.17.1
+2025-04-21 15:55:56,575 - StockChartLogger - INFO - Package plotly version: 5.22.0
+2025-04-21 15:55:56,575 - StockChartLogger - INFO - Package pandas version: 2.2.3
+2025-04-21 15:55:56,575 - StockChartLogger - INFO - Package dash-core-components version: 2.0.0
+2025-04-21 15:55:56,576 - StockChartLogger - INFO - Package dash-html-components version: 2.0.0
+2025-04-21 15:55:56,685 - StockChartLogger - WARNING - Package dash-renderer not installed
+2025-04-21 15:55:56,723 - StockChartLogger - DEBUG - Generating minimal chart
+2025-04-21 15:55:56,723 - StockChartLogger - DEBUG - Creating synthetic data
+2025-04-21 15:55:56,741 - StockChartLogger - DEBUG - Synthetic data created: 100 rows
+2025-04-21 15:55:56,742 - StockChartLogger - DEBUG - Synthetic data sample: {'Date': Timestamp('2023-01-01 00:00:00'), 'Open': 74, 'High': 99, 'Low': 10, 'Close': 80}
+2025-04-21 15:55:56,754 - StockChartLogger - DEBUG - Data validated: ['Open', 'High', 'Low', 'Close']
+2025-04-21 15:55:56,770 - StockChartLogger - DEBUG - Data NaN check: {'Open': 0, 'High': 0, 'Low': 0, 'Close': 0}
+2025-04-21 15:55:57,150 - StockChartLogger - DEBUG - Candlestick figure traces: ['candlestick', 'scatter']
+2025-04-21 15:55:57,150 - StockChartLogger - DEBUG - Candlestick figure layout: Layout({
+    'showlegend': True,
+    'template': '...',
+    'title': {'text': 'Minimal Candlestick and Scatter Test'},
+    'xaxis': {'tickformat': '%b %d, %Y', 'title': {'text': 'Date'}, 'type': 'date'},
+    'yaxis': {'fixedrange': False, 'title': {'text': 'Price (USD)'}}
+})
+2025-04-21 15:55:57,210 - StockChartLogger - DEBUG - OHLC figure traces: ['ohlc']
+2025-04-21 15:55:57,210 - StockChartLogger - DEBUG - Defining minimal app layout
+2025-04-21 15:55:57,216 - StockChartLogger - INFO - Dash app configured with minimal layout
+2025-04-21 15:55:57,216 - StockChartLogger - DEBUG - Starting Dash server on port 8050
+2025-04-22 09:32:05,075 - StockChartLogger - INFO - Dash server started. Open http://127.0.0.1:8050 in a browser.

@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+
+from dash import Dash, dcc, html, Input, Output
+import plotly.graph_objects as go
+import pandas as pd
+import yfinance as yf
+
+# Fetch sample stock data (e.g., Apple)
+stock_data = yf.download('AAPL', start='2024-01-01', end='2025-04-22')
+df = stock_data.reset_index()[['Date', 'Open', 'High', 'Low', 'Close']]
+
+# Initialize the Dash app
+app = Dash(__name__)
+
+# App layout
+app.layout = html.Div([
+    html.H3("OHLC Stock Chart with Adjustable Viewport"),
+    dcc.DatePickerRange(
+        id='date-picker',
+        min_date_allowed=df['Date'].min(),
+        max_date_allowed=df['Date'].max(),
+        initial_visible_month=df['Date'].max(),
+        start_date=df['Date'].min(),
+        end_date=df['Date'].max(),
+        style={'margin-bottom': '20px'}
+    ),
+    dcc.Graph(id='ohlc-chart')
+])
+
+# Callback to update the OHLC chart and dynamically scale y-axis
+@app.callback(
+    Output('ohlc-chart', 'figure'),
+    [Input('date-picker', 'start_date'),
+     Input('date-picker', 'end_date')]
+)
+def update_chart(start_date, end_date):
+    # Filter data based on selected date range
+    filtered_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+    
+    # Create OHLC chart
+    fig = go.Figure(data=go.Ohlc(
+        x=filtered_df['Date'],
+        open=filtered_df['Open'],
+        high=filtered_df['High'],
+        low=filtered_df['Low'],
+        close=filtered_df['Close']
+    ))
+    
+    # Dynamically scale y-axis based on visible data
+    y_min = filtered_df['Low'].min() * 0.95  # Add 5% padding below
+    y_max = filtered_df['High'].max() * 1.05  # Add 5% padding above
+    
+    # Update layout
+    fig.update_layout(
+        title='AAPL OHLC Chart',
+        xaxis_title='Date',
+        yaxis_title='Price (USD)',
+        yaxis=dict(range=[y_min, y_max]),  # Set dynamic y-axis range
+        margin=dict(l=50, r=50, t=50, b=50),
+        height=500
+    )
+    
+    return fig
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True)
+

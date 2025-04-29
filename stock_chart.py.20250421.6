@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+
+import logging
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
+from dash import Dash, dcc, html, Input, Output
+import copy
+import pkg_resources
+
+# Configure the logger (with file clearing)
+logger = logging.getLogger('StockChartLogger')
+logger.setLevel(logging.DEBUG)
+file_handler = logging.FileHandler('stock_chart.log', mode='w')
+console_handler = logging.StreamHandler()
+file_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+logger.info("Starting the stock chart Dash application")
+
+# Log package versions
+def log_package_versions():
+    packages = ['dash', 'plotly', 'pandas', 'yfinance', 'werkzeug', 'flask', 'dash-core-components', 'dash-html-components', 'dash-renderer']
+    for pkg in packages:
+        try:
+            version = pkg_resources.get_distribution(pkg).version
+            logger.info(f"Package {pkg} version: {version}")
+        except pkg_resources.DistributionNotFound:
+            logger.warning(f"Package {pkg} not installed")
+
+log_package_versions()
+
+def create_stock_chart():
+    try:
+        # Fetch stock data
+        logger.debug("Fetching stock data for AAPL")
+        stock = yf.Ticker("AAPL")
+        df = stock.history(period="1y")
+        if df.empty:
+            logger.error("DataFrame is empty after fetching data")
+            raise ValueError("No stock data retrieved")
+        logger.info("Successfully fetched stock data with %d rows", len(df))
+
+        # Validate candlestick data
+        required_columns = ['Open', 'High', 'Low', 'Close']
+        missing_columns = [col for col in required_columns if col not in df.columns or df[col].isna().all()]
+        if missing_columns:
+            logger.error("Missing or empty candlestick columns: %s", missing_columns)
+            raise ValueError(f"Missing or empty candlestick columns: {missing_columns}")
+        logger.debug("Candlestick data validated: %s", required_columns)
+        logger.debug("Candlestick data sample: Open=%s, High=%s, Low=%s, Close=%s",
+                     df['Open'].iloc[0], df['High'].iloc[0], df['Low'].iloc[0], df['Close'].iloc[0])
+        logger.debug("Candlestick data NaN check: %s", df[required_columns].isna().sum().to_dict())
+
+        # Add 20-day Simple Moving Average (SMA) column
+        logger.debug("Calculating 20-day SMA")
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        if df['SMA_20'].isna().all():
+            logger.error("SMA_20 column contains all NaN values")
+            raise ValueError("SMA_20 calculation failed")
+        logger.info("Added SMA_20 column to DataFrame")
+
+        # Add Category column (default None)
+        logger.debug("Adding Category column")
+        df['Category'] = None
+        logger.info("Added Category column with default None")
+
+        # Categorize rows
+        logger.debug("Categorizing rows based on Close, SMA_20, and Volume")
+        mean_volume = df['Volume'].mean()
+        for index, row in df.iterrows():
+            if pd.isna(row['SMA_20']):
+                continue
+            if row['Close'] > row['SMA_20'] and row['Volume'] > mean_volume:
+                df.at[index, 'Category'] = "Bullish"
+            elif row['Close'] <= row['SMA_20'] and row['Volume'] > mean_volume:
+                df.at[index, 'Category'] = "Bearish"
+            else:
+                df.at[index, 'Category'] = "Neutral"
+        logger.info("Categorized rows: %d Bullish, %d Bearish, %d Neutral",
+                    len(df[df['Category'] == "Bullish"]),
+                    len(df[df['Category'] == "Bearish"]),
+                    len(df[df['Category'] == "Neutral"]))
+
+        # Calculate initial range (last 3 months)
+        end_date = df.index[-1]
+        start_date = end_date - timedelta(days=90)
+        logger.debug("Setting initial viewport from %s to %s", start_date, end_date)
+
+        # Compute initial y-axis range
+        visible_data = df.loc[start_date:end_date]
+        if visible_data.empty:
+            logger.error("No data in initial viewport %s to %s", start_date, end_date)
+            raise ValueError("Initial viewport is empty")
+        y_min = min(visible_data['Low'].min(), visible_data['SMA_20'].min()) * 0.99
+        y_max = max(visible_data['High'].max(), visible_data['SMA_20'].max()) * 1.01
+        if pd.isna(y_min) or pd.isna(y_max):
+            logger.error("Invalid y-axis range: y_min=%s, y_max=%s", y_min, y_max)
+            raise ValueError("Invalid y-axis range due to NaN values")
+        logger.debug("Computed initial y-axis range: [%f, %f]", y_min, y_max)
+
+        # Create subplots with increased vertical spacing
+        logger.debug("Creating subplots for candlestick and volume")
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.65, 0.25],
+            shared_xaxes=True,
+            vertical_spacing=0.2,
+            subplot_titles=["Price", "Volume"]
+        )
+
+        # Add candlestick
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df['Open'],
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                name='OHLC'
+            ),
+            row=1, col=1
+        )
+
+        # Add SMA line
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df['SMA_20'],
+                name='20-day SMA',
+                line=dict(color='orange', width=2)
+            ),
+            row=1, col=1
+        )
+
+        # Add markers for Bullish rows
+        bullish_rows = df[df['Category'] == "Bullish"]
+        logger.debug("Selected %d Bullish rows for markers", len(bullish_rows))
+        if not bullish_rows.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=bullish_rows.index,
+                    y=bullish_rows['Close'],
+                    name='Bullish Days',
+                    mode='markers',
+                    marker=dict(
+                        color='green',
+                        size=8,
+                        symbol='triangle-up'
+                    )
+                ),
+                row=1, col=1
+            )
+
+        # Add volume
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name='Volume',
+                marker_color='blue'
+            ),
+            row=2, col=1
+        )
+
+        # Update layout with increased height
+        fig.update_layout(
+            title="Apple Stock Price, SMA, and Volume with Sliding Viewport",
+            yaxis_title="Price (USD)",
+            xaxis_title="Date",
+            showlegend=True,
+            xaxis_rangeslider_visible=True,
+            xaxis_rangeslider=dict(
+                visible=True,
+                yaxis_rangemode='fixed',
+                thickness=0.05
+            ),
+            xaxis=dict(
+                range=[start_date, end_date],
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1m", step="month", stepmode="backward"),
+                        dict(count=3, label="3m", step="month", stepmode="backward"),
+                        dict(count=6, label="6m", step="month", stepmode="backward"),
+                        dict(step="all", label="All")
+                    ])
+                ),
+                type="date",
+                tickformat="%b %d, %Y"
+            ),
+            yaxis=dict(
+                range=[y_min, y_max],
+                fixedrange=False
+            ),
+            yaxis2=dict(
+                autorange=True,
+                fixedrange=False,
+                title="Volume"
+            ),
+            height=800,
+            margin=dict(t=100, b=50, l=50, r=50)
+        )
+
+        # Assign range slider to first x-axis
+        fig.update_xaxes(rangeslider_visible=False, row=2, col=1)
+        fig.update_xaxes(rangeslider_visible=True, row=1, col=1)
+
+        # Log figure properties
+        logger.debug("Figure traces: %s", [trace['type'] for trace in fig.data])
+        logger.debug("Figure layout: %s", fig.layout)
+
+        # Preprocess DataFrame for JSON serialization
+        logger.debug("Preprocessing DataFrame for dcc.Store")
+        df_serializable = df.copy()
+        df_serializable.index = df_serializable.index.astype(str)
+        df_serializable = df_serializable.astype({
+            'Open': float, 'High': float, 'Low': float, 'Close': float,
+            'Volume': float, 'SMA_20': float, 'Category': str
+        }).fillna(0)
+        logger.debug("DataFrame columns for serialization: %s", list(df_serializable.columns))
+        logger.debug("First serialized record: %s", df_serializable.to_dict('records')[0] if len(df_serializable) > 0 else None)
+
+        return fig, df_serializable
+
+    except Exception as e:
+        logger.error("Error in create_stock_chart: %s", str(e), exc_info=True)
+        raise
+
+# Create Dash app
+try:
+    app = Dash(__name__)
+
+    # Add custom CSS
+    app.css.append_css({
+        "external_url": "https://codepen.io/chriddyp/pen/bWLwgP.css"
+    })
+
+    # Generate initial chart and data
+    logger.debug("Generating initial chart and data")
+    fig, df = create_stock_chart()
+
+    # Test initial figure
+#    logger.debug("Testing initial figure with fig.show()")
+#    try:
+#        fig.show()
+#    except Exception as e:
+#        logger.error("Error rendering initial figure: %s", str(e), exc_info=True)
+
+    # Layout with dcc.Store and responsive styling
+    logger.debug("Defining app layout with dcc.Store")
+    app.layout = html.Div([
+        html.H1("Stock Chart"),
+        dcc.Graph(
+            id='stock-chart',
+            figure=fig,
+            style={'height': '90vh'}
+        ),
+        dcc.Store(id='stock-data', data=df.to_dict('records'))
+    ], style={
+        'height': '100vh',
+        'display': 'flex',
+        'flexDirection': 'column',
+        'padding': '10px'
+    })
+
+    # Callback for dynamic y-axis scaling
+    @app.callback(
+        Output('stock-chart', 'figure'),
+        [Input('stock-chart', 'relayoutData'),
+         Input('stock-data', 'data')],
+        prevent_initial_call=True
+    )
+    def update_y_axis(relayout_data, stock_data):
+        try:
+            logger.debug("Received relayoutData: %s", str(relayout_data))
+            logger.debug("stock_data first record: %s", stock_data[0] if stock_data else None)
+
+            # Convert stored data back to DataFrame
+            logger.debug("Converting stock_data to DataFrame")
+            df_callback = pd.DataFrame(stock_data)
+            logger.debug("df_callback columns: %s", list(df_callback.columns))
+            df_callback.index = pd.to_datetime(df_callback.index, errors='coerce')
+            if df_callback.index.hasnans:
+                logger.error("Invalid datetime index in df_callback")
+                raise ValueError("Invalid datetime index in DataFrame")
+
+            # Create a deep copy of the initial figure
+            updated_fig = copy.deepcopy(fig)
+            logger.debug("Callback figure traces before update: %s", [trace['type'] for trace in updated_fig.data])
+
+            # Handle range selector or range slider updates
+            start = None
+            end = None
+            if relayout_data:
+                try:
+                    # Check for range selector button clicks
+                    if 'xaxis.range' in relayout_data:
+                        start = pd.to_datetime(relayout_data['xaxis.range'][0], errors='coerce')
+                        end = pd.to_datetime(relayout_data['xaxis.range'][1], errors='coerce')
+                    elif 'xaxis.range[0]' in relayout_data:
+                        start = pd.to_datetime(relayout_data['xaxis.range[0]'], errors='coerce')
+                        end = pd.to_datetime(relayout_data['xaxis.range[1]'], errors='coerce')
+                    elif 'xaxis.autorange' in relayout_data and relayout_data['xaxis.autorange']:
+                        # Handle 'All' button
+                        start = df_callback.index[0]
+                        end = df_callback.index[-1]
+                    logger.debug("Computed range: %s to %s", start, end)
+                except Exception as e:
+                    logger.error("Error parsing relayoutData dates: %s", str(e), exc_info=True)
+                    raise ValueError(f"Failed to parse relayoutData dates: {str(e)}")
+
+            if start is not None and end is not None and pd.notna(start) and pd.notna(end):
+                # Ensure start and end are within data bounds
+                data_start = df_callback.index[0]
+                data_end = df_callback.index[-1]
+                start = max(start, data_start)
+                end = min(end, data_end)
+                logger.debug("Adjusted range within bounds: %s to %s", start, end)
+
+                # Update x-axis range
+                updated_fig.update_xaxes(range=[start, end], row=1, col=1)
+
+                # Filter data for visible range
+                try:
+                    visible_data = df_callback.loc[start:end]
+                    logger.debug("visible_data shape: %s", visible_data.shape)
+                    if visible_data.empty:
+                        logger.warning("No data in visible range %s to %s", start, end)
+                        return updated_fig
+                except Exception as e:
+                    logger.error("Error slicing DataFrame for range %s to %s: %s", start, end, str(e), exc_info=True)
+                    raise ValueError(f"Failed to slice DataFrame: {str(e)}")
+
+                # Compute y-axis range
+                y_min = min(visible_data['Low'].min(), visible_data['SMA_20'].min()) * 0.99
+                y_max = max(visible_data['High'].max(), visible_data['SMA_20'].max()) * 1.01
+                if pd.isna(y_min) or pd.isna(y_max):
+                    logger.warning("Invalid y-axis range: y_min=%s, y_max=%s", y_min, y_max)
+                    return updated_fig
+                logger.debug("Updating y-axis range to [%f, %f]", y_min, y_max)
+
+                # Update y-axis range for the price subplot
+                updated_fig.update_yaxes(range=[y_min, y_max], row=1, col=1)
+            else:
+                logger.debug("No valid range update, returning unchanged figure")
+
+            logger.debug("Callback figure traces after update: %s", [trace['type'] for trace in updated_fig.data])
+            return updated_fig
+
+        except Exception as e:
+            logger.error("Error in update_y_axis callback: %s", str(e), exc_info=True)
+            return copy.deepcopy(fig)
+
+    logger.info("Dash app configured with dcc.Store and callback")
+
+except Exception as e:
+    logger.error("Error setting up Dash app: %s", str(e), exc_info=True)
+    raise
+
+if __name__ == '__main__':
+    try:
+        logger.debug("Starting Dash server on port 8050")
+        app.run_server(debug=True, use_reloader=False, port=8050)
+        logger.info("Dash server started. Open http://127.0.0.1:8050 in a browser.")
+    except Exception as e:
+        logger.error("Error starting Dash server: %s", str(e), exc_info=True)
+        raise
+
